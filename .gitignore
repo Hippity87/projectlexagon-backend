@@ -1,0 +1,13 @@
+bin/
+obj/
+*.user
+*.suo
+*.DotSettings.user
+*.db
+*.sqlite
+.vs/
+.idea/
+.vscode/
+*.log
+appsettings.json
+appsettings.*.json
