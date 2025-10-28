@@ -16,8 +16,8 @@ dotnet restore
 dotnet build
 # (Set ConnectionStrings__Default to your Postgres)
 dotnet run
-
-Notes
+```
+## Notes
 
 Intended for my own environment; APIs are stable enough for my UIs but undocumented beyond this README.
 
