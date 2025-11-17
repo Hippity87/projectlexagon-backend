@@ -1,4 +1,5 @@
 ﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;  // Add this for async/query extensions
 using ProjectLexagonBackend.Data;
 using ProjectLexagonBackend.Models;
 
@@ -37,11 +38,27 @@ public class SensorDataController : ControllerBase
         return Ok(new { status = "ok", received = entity });
     }
 
-
     [HttpGet]
-    public IActionResult GetAll()
+    public async Task<IActionResult> GetSensorData([FromQuery] int? lastN = null)
     {
-        return Ok(_context.SensorData.OrderByDescending(x => x.Timestamp).ToList());
+        IQueryable<SensorData> query = _context.SensorData;
+
+        if (lastN.HasValue && lastN.Value > 0)
+        {
+            // Efficient: Sort descending, take top N, then reverse to oldest-first
+            var recentData = await query
+                .OrderByDescending(x => x.Timestamp)
+                .Take(lastN.Value)
+                .ToListAsync();
+
+            recentData.Reverse();  // Now oldest to newest
+            return Ok(recentData);
+        }
+        else
+        {
+            // Fallback: Return all, sorted descending (as before)
+            return Ok(await query.OrderByDescending(x => x.Timestamp).ToListAsync());
+        }
     }
 }
 
