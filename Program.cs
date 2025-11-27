@@ -1,11 +1,12 @@
 using ProjectLexagonBackend.Data;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.AspNetCore.RateLimiting; // UUSI: Tarvitaan Rate Limiterille
-using System.Threading.RateLimiting;     // UUSI: Tarvitaan asetuksille
+using Microsoft.AspNetCore.RateLimiting;
+using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.HttpOverrides; // Tarvitaan IP-osoitteiden selvittämiseen
+using System.Net;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Hae yhteysosoite ensisijaisesti ympäristömuuttujasta
 var connectionString = Environment.GetEnvironmentVariable("LEXAGON_CONNECTIONSTRING");
 if (string.IsNullOrWhiteSpace(connectionString))
     connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
@@ -17,24 +18,40 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-// --- UUSI: RATE LIMITER PALVELUN REKISTERÖINTI ---
+// 1. Määritellään, että luotetaan Apachen välittämään IP-osoitteeseen (X-Forwarded-For)
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    // Tärkeä: Tyhjennetään oletusverkot ja luotetaan "loopback" proxypalvelimeen (Apache on samassa koneessa)
+    options.KnownNetworks.Clear();
+    options.KnownProxies.Clear();
+});
+
+// 2. Muutetaan Rate Limiter "Partitioned" -malliksi (Per IP)
 builder.Services.AddRateLimiter(options =>
 {
-    // Jos raja paukkuu, palautetaan 429 (Too Many Requests)
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
 
-    // Luodaan policy nimeltä "fixed"
-    options.AddFixedWindowLimiter(policyName: "fixed", limiterOptions =>
+    // "fixed" policy, joka jakaa (partition) käyttäjät IP-osoitteen mukaan
+    options.AddPolicy("fixed", httpContext =>
     {
-        limiterOptions.PermitLimit = 10;                     // Max 10 pyyntöä...
-        limiterOptions.Window = TimeSpan.FromMinutes(1);     // ...minuutin ikkunassa
-        limiterOptions.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
-        limiterOptions.QueueLimit = 2;                       // Sallitaan 2 pyyntöä jonoon
+        // Haetaan käyttäjän oikea IP. Jos ei löydy, käytetään "unknown".
+        var remoteIp = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+        return RateLimitPartition.GetFixedWindowLimiter(partitionKey: remoteIp, factory: _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 10,
+            Window = TimeSpan.FromMinutes(1),
+            QueueLimit = 2,
+            QueueProcessingOrder = QueueProcessingOrder.OldestFirst
+        });
     });
 });
-// -------------------------------------------------
 
 var app = builder.Build();
+
+// Ota Forwarded Headers käyttöön HETI alussa, jotta IP on oikein myöhemmissä vaiheissa
+app.UseForwardedHeaders();
 
 if (app.Environment.IsDevelopment())
 {
@@ -43,13 +60,9 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
-
 app.UseAuthorization();
 
-// --- UUSI: RATE LIMITER MIDDLEWARE ---
-// Tämän pitää olla ennen MapControllers-komentoa!
-app.UseRateLimiter();
-// -------------------------------------
+app.UseRateLimiter(); // Rajoitin käyttöön
 
 app.MapControllers();
 app.Run();
