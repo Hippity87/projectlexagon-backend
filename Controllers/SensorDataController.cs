@@ -1,4 +1,5 @@
 ﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;  // Add this for async/query extensions
 using ProjectLexagonBackend.Data;
 using ProjectLexagonBackend.Models;
@@ -7,6 +8,7 @@ namespace ProjectLexagonBackend.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[EnableRateLimiting("fixed")]
 public class SensorDataController : ControllerBase
 {
     private readonly ProjectLexagonContext _context;
@@ -43,22 +45,20 @@ public class SensorDataController : ControllerBase
     {
         IQueryable<SensorData> query = _context.SensorData;
 
-        if (lastN.HasValue && lastN.Value > 0)
-        {
-            // Efficient: Sort descending, take top N, then reverse to oldest-first
-            var recentData = await query
-                .OrderByDescending(x => x.Timestamp)
-                .Take(lastN.Value)
-                .ToListAsync();
+        // Jos käyttäjä pyytää määrän, käytetään sitä. 
+        // MUTTA: laitetaan silti maksimikatto (esim. max 1000), ettei joku pyydä lastN=9999999
+        int takeAmount = lastN.HasValue && lastN.Value > 0 ? lastN.Value : 50;
 
-            recentData.Reverse();  // Now oldest to newest
-            return Ok(recentData);
-        }
-        else
-        {
-            // Fallback: Return all, sorted descending (as before)
-            return Ok(await query.OrderByDescending(x => x.Timestamp).ToListAsync());
-        }
+        // Turvallisuus: Pakotetaan katto. Jos pyydetään yli 200, annetaan vain 200.
+        if (takeAmount > 200) takeAmount = 200;
+
+        var data = await query
+            .OrderByDescending(x => x.Timestamp)
+            .Take(takeAmount)
+            .ToListAsync();
+
+        data.Reverse(); // Käännetään aina, jotta graafi piirtyy oikein
+        return Ok(data);
     }
 }
 
